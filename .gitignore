@@ -1,0 +1,25 @@
+################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs
+/OrgLicenseManager/obj
+/OrgLicenseManager/.vs
+/OrgLicenseManager/bin/Debug/net8.0
+/GenerateToken/obj
+/GenerateToken/bin/Debug/net8.0
+/nul
+/OrgLicenseManager.Contracts/obj
+/OrgLicenseManager.Contracts/bin/Debug/net8.0
+/OrgLicenseManager/logs
+/OrgLicenseManager.Tests/obj
+/OrgLicenseManager.Tests/bin
+
+# Sensitive configuration files
+/OrgLicenseManager/appsettings.json
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
