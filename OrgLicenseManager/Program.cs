@@ -26,6 +26,15 @@ try
     builder.Services.AddDatabase(builder.Configuration);
     builder.Services.AddExceptionHandling();
     builder.Services.AddSwaggerDocumentation();
+    builder.Services.AddCors(options =>
+    {
+        options.AddDefaultPolicy(policy =>
+        {
+            policy.WithOrigins("http://localhost:5173")
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        });
+    });
     builder.Services.AddJwtAuthentication(builder.Configuration);
     builder.Services.AddControllers();
 
@@ -34,7 +43,7 @@ try
     builder.Services.AddSingleton<ILicenseSettingsService, LicenseSettingsService>();
     builder.Services.AddScoped<IUserService, UserService>();
     builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
-    builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+    builder.Services.AddScoped<IEmailService, MockEmailService>();
     builder.Services.AddScoped<ILicenseService, LicenseService>();
     builder.Services.AddScoped<IOrganizationService, OrganizationService>();
     builder.Services.AddScoped<IInvitationService, InvitationService>();
@@ -46,6 +55,7 @@ try
 
     app.UseExceptionHandling();
     app.UseSerilogRequestLogging();
+    app.UseCors();
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseSwaggerDocumentation();

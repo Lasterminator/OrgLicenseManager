@@ -1,6 +1,6 @@
 # OrgLicenseManager
 
-A production-ready, multi-tenant **Organization & License Management API** built with **.NET 8**. It powers the backend for a SaaS platform where companies create organizations, invite team members via email, and manage software licenses with automatic renewal -- all governed by fine-grained role-based access control.
+A production-ready, multi-tenant **Organization & License Management** platform built with **.NET 8** and **React**. It powers the backend and frontend for a SaaS product where companies create organizations, invite team members via email, and manage software licenses with automatic renewal -- all governed by fine-grained role-based access control.
 
 ---
 
@@ -11,6 +11,7 @@ A production-ready, multi-tenant **Organization & License Management API** built
 - [Architecture Overview](#architecture-overview)
 - [Tech Stack](#tech-stack)
 - [Getting Started (Docker)](#getting-started-docker)
+- [Frontend](#frontend)
 - [Authentication](#authentication)
 - [API Reference](#api-reference)
 - [Pagination, Sorting & Filtering](#pagination-sorting--filtering)
@@ -31,12 +32,13 @@ SaaS platforms need a way to manage **who** has access to **what**. Organization
 
 ### What This System Does
 
-**OrgLicenseManager** is the backend API that handles all of this:
+**OrgLicenseManager** is a full-stack platform that handles all of this:
 
 - **Organizations** are the top-level tenant. A company or team creates an organization and becomes its Owner.
 - **Members** are users who belong to one or more organizations. Each member has a role (Owner, Admin, or Member) that determines what they can do.
 - **Licenses** are subscriptions tied to an organization. They have expiration dates and can auto-renew. Admins create licenses; org owners/admins assign them to specific users.
 - **Invitations** are email-based. An org owner invites someone by email, the system sends a styled HTML email with a one-click accept link, and the invited user joins the org with the assigned role.
+- **Frontend** is a React SPA that consumes the API, providing a polished dashboard for managing organizations, members, licenses, and invitations -- with role-aware UI that adapts to the logged-in user's permissions.
 
 ### Authorization Model
 
@@ -80,7 +82,7 @@ Owners cannot be removed by other owners/admins. Only the owner themselves can l
 
 - View all organizations I belong to
 - View details of a specific organization I'm part of
-- Accept an invitation to join an organization (via API call or one-click email link)
+- Accept an invitation to join an organization (via API call, one-click email link, or the frontend)
 - Leave an organization I'm part of
 
 ### As the System (Automated)
@@ -94,7 +96,15 @@ Owners cannot be removed by other owners/admins. Only the owner themselves can l
 ## Architecture Overview
 
 ```
-Client (Swagger UI / HTTP)
+React Frontend (localhost:5173)
+    |
+    | HTTP (JWT in Authorization header)
+    |
+    v
+.NET 8 Web API (localhost:5228)
+    |
+    v
+[CORS Middleware] -- allows frontend origin
     |
     v
 [JWT Authentication Middleware]
@@ -117,8 +127,9 @@ Client (Swagger UI / HTTP)
 [Background Service: LicenseRenewalService] -- runs every 60s, renews expired licenses
 ```
 
-The architecture follows a **Controller -> Service -> EF Core** pattern:
+The architecture follows a **Frontend -> API -> Service -> EF Core** pattern:
 
+- **Frontend** is a React SPA that handles all user interaction, routing, and state management. It communicates with the API exclusively via `fetch` with JWT bearer tokens.
 - **Controllers** are thin -- they handle HTTP concerns (routing, request/response mapping) and delegate to services.
 - **Services** contain all business logic, validation, and authorization checks. Each service gets the current user context and enforces permissions.
 - **Entities** are EF Core models that map to database tables.
@@ -130,7 +141,9 @@ The architecture follows a **Controller -> Service -> EF Core** pattern:
 
 | Component | Technology |
 |-----------|-----------|
-| Framework | .NET 8 (ASP.NET Core Web API) |
+| Backend Framework | .NET 8 (ASP.NET Core Web API) |
+| Frontend Framework | React 18 + TypeScript |
+| Frontend Tooling | Vite, Tailwind CSS, React Router v6 |
 | Database | PostgreSQL |
 | ORM | Entity Framework Core 8 |
 | Authentication | JWT Bearer Tokens (HS256) |
@@ -147,6 +160,7 @@ The architecture follows a **Controller -> Service -> EF Core** pattern:
 ### Prerequisites
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [Node.js 18+](https://nodejs.org/) (for the frontend)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
 ### 1. Start PostgreSQL
@@ -161,15 +175,17 @@ docker run --name orglicensemanager-db \
 
 ### 2. Configure the Application
 
-```bash
-cd OrgLicenseManager
-cp appsettings.example.json appsettings.json
-```
-
-Edit `appsettings.json` -- the defaults work out of the box with the Docker command above:
+Create `appsettings.json` inside the `OrgLicenseManager/` project folder:
 
 ```json
 {
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
   "ConnectionStrings": {
     "DefaultConnection": "Host=localhost;Port=5432;Database=orglicensemanager;Username=postgres;Password=password"
   },
@@ -182,7 +198,7 @@ Edit `appsettings.json` -- the defaults work out of the box with the Docker comm
 }
 ```
 
-> **Note:** `appsettings.json` is gitignored. It will never be committed. See [Configuration](#configuration) for email setup.
+> **Note:** `appsettings.json` is gitignored. It will never be committed. The defaults above work out of the box with the Docker command in step 1. See [Configuration](#configuration) for email setup.
 
 ### 3. Apply Database Migrations
 
@@ -190,15 +206,25 @@ Edit `appsettings.json` -- the defaults work out of the box with the Docker comm
 dotnet ef database update --project OrgLicenseManager
 ```
 
-### 4. Run the Application
+### 4. Run the API
 
 ```bash
 dotnet run --project OrgLicenseManager
 ```
 
-### 5. Open Swagger UI
+The API starts at **http://localhost:5228**. Swagger UI loads at the root.
 
-Navigate to **http://localhost:5228** -- the Swagger UI loads at the root.
+### 5. Run the Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend starts at **http://localhost:5173**. It connects to the API automatically via `VITE_API_URL` in `frontend/.env`.
+
+> **Note:** The API has CORS configured to accept requests from `http://localhost:5173`. If you change the frontend port, update the CORS origin in `Program.cs`.
 
 ### Cleanup
 
@@ -206,6 +232,47 @@ Navigate to **http://localhost:5228** -- the Swagger UI loads at the root.
 # Stop and remove the database container
 docker stop orglicensemanager-db && docker rm orglicensemanager-db
 ```
+
+---
+
+## Frontend
+
+The frontend is a **React 18 + TypeScript** single-page application built with **Vite** and styled with **Tailwind CSS**. It lives in the `frontend/` directory and consumes the .NET API via a typed `fetch` wrapper that automatically attaches JWT tokens to every request.
+
+### Pages
+
+| Page | Route | What It Does |
+|------|-------|-------------|
+| **Login** | `/login` | User ID, email, and role (User/Admin) form. Calls `POST /api/auth/login`, stores the JWT in `localStorage`, and redirects to the dashboard. |
+| **Dashboard** | `/organizations` | Lists all organizations the user belongs to as cards. "Create Organization" button opens a modal to create a new org. Click a card to drill into org details. |
+| **Organization Detail** | `/organizations/:orgId` | Displays org name, description, and your role. Three tabs: **Members**, **Invitations**, and **Licenses** -- each with paginated tables and action buttons scoped to your role. |
+| **Admin Licenses** | `/admin/licenses` | System-wide license management (Admin role only). Paginated, searchable list of all licenses across all orgs. Create, edit (expiration/auto-renewal), and revoke licenses. Includes license settings for the default expiration duration. |
+| **Accept Invitation** | `/invitations/accept?token=...` | Accepts an invitation via the token query parameter. Shows a success screen with the org name and assigned role, or an error message if the token is invalid/expired. |
+
+### How Auth Works in the Frontend
+
+1. The user submits the login form. The app calls `POST /api/auth/login` with `userId`, `email`, and `role`.
+2. On success, the JWT token and user info are stored in `localStorage` and exposed via a React context (`AuthContext`).
+3. Every API call reads the token from `localStorage` and attaches it as `Authorization: Bearer <token>`.
+4. If any API call returns `401`, the app clears the stored token and redirects to `/login`.
+5. Routes are wrapped in a `ProtectedRoute` component that redirects unauthenticated users to `/login`.
+
+### Role-Aware UI
+
+The frontend adapts based on two layers of roles:
+
+- **System role** (`User` vs `Admin`): determines whether the "Admin Licenses" nav item is visible and whether the admin routes are accessible.
+- **Organization role** (`Owner`, `Admin`, `Member`): determines which action buttons appear on the org detail page. Members see read-only tables. Owners and Admins see "Invite user", "Change role", "Assign license", "Remove member", and "Edit/Delete organization" buttons. Only Owners can delete an organization.
+
+### Frontend Environment
+
+The frontend reads its API base URL from a `.env` file:
+
+```
+VITE_API_URL=http://localhost:5228
+```
+
+A `.env.example` file is committed to the repo as a template. The actual `.env` file is gitignored.
 
 ---
 
@@ -247,6 +314,8 @@ Authorization: Bearer <your-token>
 ```
 
 In Swagger UI, click **Authorize** and enter: `Bearer <your-token>`
+
+In the frontend, this is handled automatically -- the API client reads the token from `localStorage` and attaches it to every request.
 
 ### How Users Are Created
 
@@ -558,6 +627,8 @@ All errors are returned in [RFC 7807 ProblemDetails](https://tools.ietf.org/html
 
 A global exception handling middleware catches these custom exceptions and converts them to proper HTTP responses automatically.
 
+The frontend reads the `detail` field from these error responses and displays it as a toast notification, giving the user clear feedback on what went wrong.
+
 ---
 
 ## Configuration
@@ -593,6 +664,14 @@ A global exception handling middleware catches these custom exceptions and conve
 }
 ```
 
+### frontend/.env (gitignored)
+
+```
+VITE_API_URL=http://localhost:5228
+```
+
+A `.env.example` file is committed to the repo as a reference.
+
 ---
 
 ## Project Structure
@@ -617,7 +696,7 @@ OrgLicenseManager/
 ├── Data/                     # DbContext with Fluent API configuration
 ├── BackgroundServices/       # License auto-renewal hosted service
 ├── Exceptions/               # Custom exception classes (400/401/403/404)
-├── Extensions/               # Service registration, auth, Swagger, DB setup
+├── Extensions/               # Service registration, auth, Swagger, DB, CORS
 ├── Middleware/               # Global exception handling middleware
 ├── Migrations/               # EF Core migrations
 └── Properties/               # Launch settings
@@ -629,6 +708,38 @@ OrgLicenseManager.Contracts/  # Request/Response DTOs (separate project)
 ├── Licenses/                 # License CRUD requests, LicenseResponse
 ├── Invitations/              # Create/Accept invitation DTOs
 └── Common/                   # PaginationRequest, PagedResult<T>
+
+frontend/                     # React SPA (Vite + TypeScript + Tailwind)
+├── src/
+│   ├── api/                  # Typed API client (fetch wrapper per resource)
+│   │   ├── client.ts         # Base fetch wrapper, token attachment, error handling
+│   │   ├── auth.ts           # Login, claims
+│   │   ├── organizations.ts  # Org CRUD, members, invitations, org licenses
+│   │   ├── memberships.ts    # User's own memberships, accept invitation
+│   │   └── admin.ts          # Admin license CRUD, license settings
+│   ├── components/           # Shared UI components
+│   │   ├── Layout.tsx        # App shell: top nav, user menu, route outlet
+│   │   ├── Button.tsx        # Primary/secondary/danger/ghost button variants
+│   │   ├── Card.tsx          # Content card with configurable padding
+│   │   ├── Modal.tsx         # Dialog overlay with title, body, footer
+│   │   └── Toast.tsx         # Auto-dismissing notification (success/error/info)
+│   ├── contexts/
+│   │   └── AuthContext.tsx    # Auth state, login/logout, token persistence
+│   ├── pages/
+│   │   ├── LoginPage.tsx     # Login form (userId, email, role)
+│   │   ├── DashboardPage.tsx # Organization list + create modal
+│   │   ├── OrgDetailPage.tsx # Org header + Members/Invitations/Licenses tabs
+│   │   ├── AdminLicensesPage.tsx  # System-wide license management (Admin only)
+│   │   └── AcceptInvitationPage.tsx # Accept invitation via token query param
+│   ├── types/
+│   │   └── api.ts            # TypeScript interfaces matching API DTOs
+│   ├── App.tsx               # Router setup, protected routes, admin guard
+│   └── main.tsx              # Entry point, providers
+├── .env.example              # VITE_API_URL template (committed)
+├── index.html                # Vite entry HTML
+├── tailwind.config.js        # Tailwind theme (primary color palette)
+├── vite.config.ts            # Vite config with path aliases
+└── package.json              # Dependencies and scripts
 ```
 
 ---
@@ -676,15 +787,17 @@ PUT /api/organizations/{orgId}/users/{bobUserId}/role
 # No action needed -- it just works.
 ```
 
+All of the above can also be done through the frontend UI -- no `curl` required.
+
 ---
 
 ## Development Commands
 
 ```bash
-# Build
+# Build the backend
 dotnet build OrgLicenseManager/OrgLicenseManager.sln
 
-# Run
+# Run the API
 dotnet run --project OrgLicenseManager
 
 # Create a new migration
@@ -692,4 +805,13 @@ dotnet ef migrations add <MigrationName> --project OrgLicenseManager
 
 # Apply migrations
 dotnet ef database update --project OrgLicenseManager
+
+# Install frontend dependencies
+cd frontend && npm install
+
+# Run the frontend dev server
+cd frontend && npm run dev
+
+# Build the frontend for production
+cd frontend && npm run build
 ```
