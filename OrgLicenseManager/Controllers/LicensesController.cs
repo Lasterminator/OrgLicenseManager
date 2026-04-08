@@ -29,6 +29,7 @@ public class LicensesController : ControllerBase
         var response = new LicenseResponse(
             Id: license.Id,
             OrganizationId: license.OrganizationId,
+            OrganizationName: license.Organization?.Name ?? string.Empty,
             AssignedToUserId: license.AssignedToUserId,
             AssignedToEmail: license.AssignedToUser?.Email,
             ExpiresAt: license.ExpiresAt,
@@ -50,6 +51,7 @@ public class LicensesController : ControllerBase
             Items: pagedLicenses.Items.Select(l => new LicenseResponse(
                 Id: l.Id,
                 OrganizationId: l.OrganizationId,
+                OrganizationName: l.Organization?.Name ?? string.Empty,
                 AssignedToUserId: l.AssignedToUserId,
                 AssignedToEmail: l.AssignedToUser?.Email,
                 ExpiresAt: l.ExpiresAt,
@@ -76,6 +78,7 @@ public class LicensesController : ControllerBase
         var response = new LicenseResponse(
             Id: license.Id,
             OrganizationId: license.OrganizationId,
+            OrganizationName: license.Organization?.Name ?? string.Empty,
             AssignedToUserId: license.AssignedToUserId,
             AssignedToEmail: license.AssignedToUser?.Email,
             ExpiresAt: license.ExpiresAt,

@@ -18,4 +18,5 @@ public interface IOrganizationService
     Task AssignLicenseAsync(Guid organizationId, Guid targetUserId, Guid licenseId, User currentUser);
     Task UnassignLicenseAsync(Guid organizationId, Guid targetUserId, User currentUser);
     Task<PagedResult<License>> GetLicensesPagedAsync(Guid organizationId, User currentUser, PaginationRequest pagination);
+    Task<PagedResult<Organization>> GetAllOrganizationsPagedAsync(PaginationRequest pagination);
 }

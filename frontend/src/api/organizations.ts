@@ -131,6 +131,9 @@ export async function getOrgLicenses(
   const search = new URLSearchParams()
   if (params?.page) search.set('page', String(params.page))
   if (params?.pageSize) search.set('pageSize', String(params.pageSize))
+  if (params?.sortBy) search.set('sortBy', params.sortBy)
+  if (params?.sortDescending != null) search.set('sortDescending', String(params.sortDescending))
+  if (params?.search) search.set('search', params.search)
   const q = search.toString()
   return apiRequest<PagedResult<License>>(
     `/api/organizations/${orgId}/licenses${q ? `?${q}` : ''}`

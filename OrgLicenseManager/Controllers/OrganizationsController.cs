@@ -287,6 +287,7 @@ public class OrganizationsController : ControllerBase
             Items: pagedLicenses.Items.Select(l => new LicenseResponse(
                 Id: l.Id,
                 OrganizationId: l.OrganizationId,
+                OrganizationName: l.Organization?.Name ?? string.Empty,
                 AssignedToUserId: l.AssignedToUserId,
                 AssignedToEmail: l.AssignedToUser?.Email,
                 ExpiresAt: l.ExpiresAt,

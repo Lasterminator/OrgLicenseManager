@@ -34,14 +34,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/invitations/accept"
-        element={
-          <ProtectedRoute>
-            <AcceptInvitationPage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/invitations/accept" element={<AcceptInvitationPage />} />
       <Route
         path="/"
         element={

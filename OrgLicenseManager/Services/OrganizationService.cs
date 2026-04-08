@@ -61,7 +61,7 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        RequireOwnerOrAdmin(GetRequiredMembership(organization, currentUser.Id));
 
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -88,7 +88,8 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        var currentMembership = GetRequiredMembership(organization, currentUser.Id);
+        RequireOwner(currentMembership);
 
         _context.Organizations.Remove(organization);
         await _context.SaveChangesAsync();
@@ -112,11 +113,7 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        var membership = organization.Memberships.FirstOrDefault(m => m.UserId == currentUser.Id);
-        if (membership == null)
-        {
-            throw new ForbiddenException("Not a member", "You are not a member of this organization");
-        }
+        _ = GetRequiredMembership(organization, currentUser.Id);
 
         return organization;
     }
@@ -134,7 +131,7 @@ public class OrganizationService : IOrganizationService
     public async Task<PagedResult<OrganizationMembership>> GetMembersPagedAsync(Guid organizationId, User currentUser, PaginationRequest pagination)
     {
         var organization = await GetByIdForMemberAsync(organizationId, currentUser);
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        RequireOwnerOrAdmin(GetRequiredMembership(organization, currentUser.Id));
 
         var sortMappings = new Dictionary<string, Expression<Func<OrganizationMembership, object>>>
         {
@@ -162,7 +159,7 @@ public class OrganizationService : IOrganizationService
     public async Task<OrganizationMembership> GetMemberAsync(Guid organizationId, Guid targetUserId, User currentUser)
     {
         var organization = await GetByIdForMemberAsync(organizationId, currentUser);
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        RequireOwnerOrAdmin(GetRequiredMembership(organization, currentUser.Id));
 
         var membership = await _context.OrganizationMemberships
             .Include(m => m.User)
@@ -188,12 +185,19 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        var currentMembership = GetRequiredMembership(organization, currentUser.Id);
+        RequireOwnerOrAdmin(currentMembership);
 
         var targetMembership = organization.Memberships.FirstOrDefault(m => m.UserId == targetUserId);
         if (targetMembership == null)
         {
             throw new NotFoundException("Member not found", "The specified user is not a member of this organization");
+        }
+
+        var managesOwnerRole = targetMembership.Role == OrganizationRole.Owner || newRole == OrganizationRole.Owner;
+        if (managesOwnerRole)
+        {
+            RequireOwner(currentMembership);
         }
 
         // Ensure at least one owner remains if demoting an owner
@@ -221,7 +225,8 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        var currentMembership = GetRequiredMembership(organization, currentUser.Id);
+        RequireOwnerOrAdmin(currentMembership);
 
         var targetMembership = await _context.OrganizationMemberships
             .Include(m => m.AssignedLicense)
@@ -232,14 +237,14 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Member not found", "The specified user is not a member of this organization");
         }
 
-        // Ensure at least one owner remains
         if (targetMembership.Role == OrganizationRole.Owner)
         {
-            var ownerCount = organization.Memberships.Count(m => m.Role == OrganizationRole.Owner);
-            if (ownerCount <= 1)
-            {
-                throw new BadRequestException("Cannot remove owner", "Organization must have at least one owner. Transfer ownership first.");
-            }
+            throw new BadRequestException("Cannot remove owner", "Owners cannot be removed. Owners must leave the organization themselves.");
+        }
+
+        if (targetUserId == currentUser.Id)
+        {
+            throw new BadRequestException("Cannot remove self", "Use the leave organization flow to remove your own membership.");
         }
 
         // Unassign license before removing membership
@@ -265,7 +270,7 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        RequireOwnerOrAdmin(GetRequiredMembership(organization, currentUser.Id));
 
         var targetMembership = organization.Memberships.FirstOrDefault(m => m.UserId == targetUserId);
         if (targetMembership == null)
@@ -307,7 +312,7 @@ public class OrganizationService : IOrganizationService
             throw new NotFoundException("Organization not found", $"Organization with ID {organizationId} does not exist");
         }
 
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        RequireOwnerOrAdmin(GetRequiredMembership(organization, currentUser.Id));
 
         var targetMembership = await _context.OrganizationMemberships
             .Include(m => m.AssignedLicense)
@@ -328,26 +333,62 @@ public class OrganizationService : IOrganizationService
         await _context.SaveChangesAsync();
     }
 
-    private async Task RequireOwnerOrAdminAsync(Organization organization, User user)
+    public async Task<PagedResult<Organization>> GetAllOrganizationsPagedAsync(PaginationRequest pagination)
     {
-        var membership = organization.Memberships.FirstOrDefault(m => m.UserId == user.Id);
+        var sortMappings = new Dictionary<string, Expression<Func<Organization, object>>>
+        {
+            ["name"] = o => o.Name,
+            ["createdat"] = o => o.CreatedAt,
+            ["updatedat"] = o => o.UpdatedAt
+        };
+
+        var query = _context.Organizations
+            .Include(o => o.Memberships)
+            .AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(pagination.Search))
+        {
+            var search = pagination.Search.ToLower();
+            query = query.Where(o =>
+                o.Name.ToLower().Contains(search) ||
+                (o.Description != null && o.Description.ToLower().Contains(search)));
+        }
+
+        query = query.ApplySort(pagination.SortBy, pagination.SortDescending, sortMappings, o => o.Name);
+
+        return await query.ToPagedResultAsync(pagination);
+    }
+
+    private static OrganizationMembership GetRequiredMembership(Organization organization, Guid userId)
+    {
+        var membership = organization.Memberships.FirstOrDefault(m => m.UserId == userId);
         if (membership == null)
         {
             throw new ForbiddenException("Not a member", "You are not a member of this organization");
         }
 
+        return membership;
+    }
+
+    private static void RequireOwnerOrAdmin(OrganizationMembership membership)
+    {
         if (membership.Role < OrganizationRole.Admin)
         {
             throw new ForbiddenException("Insufficient permissions", "You must be an Owner or Admin to perform this action");
         }
+    }
 
-        await Task.CompletedTask;
+    private static void RequireOwner(OrganizationMembership membership)
+    {
+        if (membership.Role != OrganizationRole.Owner)
+        {
+            throw new ForbiddenException("Insufficient permissions", "You must be an Owner to perform this action");
+        }
     }
 
     public async Task<PagedResult<License>> GetLicensesPagedAsync(Guid organizationId, User currentUser, PaginationRequest pagination)
     {
-        var organization = await GetByIdForMemberAsync(organizationId, currentUser);
-        await RequireOwnerOrAdminAsync(organization, currentUser);
+        _ = await GetByIdForMemberAsync(organizationId, currentUser);
 
         var sortMappings = new Dictionary<string, Expression<Func<License, object>>>
         {
@@ -359,6 +400,7 @@ public class OrganizationService : IOrganizationService
 
         var query = _context.Licenses
             .Include(l => l.AssignedToUser)
+            .Include(l => l.Organization)
             .Where(l => l.OrganizationId == organizationId);
 
         if (!string.IsNullOrWhiteSpace(pagination.Search))

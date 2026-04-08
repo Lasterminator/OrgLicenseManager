@@ -57,6 +57,7 @@ export interface UpdateMemberRoleRequest {
 export interface License {
   id: string
   organizationId: string
+  organizationName: string
   assignedToUserId: string | null
   assignedToEmail: string | null
   expiresAt: string

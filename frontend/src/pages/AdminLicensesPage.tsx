@@ -1,157 +1,238 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useDeferredValue, useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import {
-  getAllLicenses,
-  createLicense,
-  updateLicense,
   cancelLicense,
+  createLicense,
+  getAdminOrganizations,
+  getAllLicenses,
   getLicenseSettings,
+  updateLicense,
   updateLicenseSettings,
 } from '../api/admin'
-import { getOrganizations } from '../api/organizations'
-import type { License, Organization } from '../types/api'
+import type { License } from '../types/api'
 import Button from '../components/Button'
 import Card from '../components/Card'
+import ConfirmDialog from '../components/ConfirmDialog'
+import EmptyState from '../components/EmptyState'
+import LoadingState from '../components/LoadingState'
 import Modal from '../components/Modal'
+import PageHeader from '../components/PageHeader'
+import StatCard from '../components/StatCard'
+import StatusBadge from '../components/StatusBadge'
 import Toast from '../components/Toast'
+import { formatDateTime, formatRelativeDays } from '../lib/formatters'
+
+const licenseQueryKey = (page: number, search: string) => ['admin-licenses', page, search]
 
 export default function AdminLicensesPage() {
+  const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
-  const [data, setData] = useState<{
-    items: License[]
-    totalPages: number
-    totalCount: number
-  } | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const deferredSearch = useDeferredValue(search)
   const [createOpen, setCreateOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [editingLicense, setEditingLicense] = useState<License | null>(null)
+  const [revokingLicense, setRevokingLicense] = useState<License | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await getAllLicenses({
+  const licensesQuery = useQuery({
+    queryKey: licenseQueryKey(page, deferredSearch),
+    queryFn: () =>
+      getAllLicenses({
         page,
         pageSize: 10,
         sortBy: 'expiresAt',
-        sortDescending: true,
-        search: search.trim() || undefined,
-      })
-      setData({
-        items: res.items,
-        totalPages: res.totalPages,
-        totalCount: res.totalCount,
-      })
-    } catch (err) {
-      setToast({ message: err instanceof Error ? err.message : 'Failed to load licenses', type: 'error' })
-      setData({ items: [], totalPages: 0, totalCount: 0 })
-    } finally {
-      setLoading(false)
-    }
-  }, [page, search])
+        sortDescending: false,
+        search: deferredSearch.trim() || undefined,
+      }),
+  })
 
-  useEffect(() => {
-    load()
-  }, [load])
+  const revokeLicenseMutation = useMutation({
+    mutationFn: cancelLicense,
+    onSuccess: async () => {
+      setRevokingLicense(null)
+      setToast({ message: 'License revoked.', type: 'success' })
+      await queryClient.invalidateQueries({ queryKey: ['admin-licenses'] })
+    },
+    onError: (error) => {
+      setToast({
+        message: error instanceof Error ? error.message : 'Failed to revoke license',
+        type: 'error',
+      })
+    },
+  })
 
-  const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type })
-  }
+  const licenses = licensesQuery.data?.items ?? []
+  const activeCount = licenses.filter((license) => license.isActive).length
+  const expiringSoon = licenses.filter((license) => {
+    const diff = new Date(license.expiresAt).getTime() - Date.now()
+    return license.isActive && diff >= 0 && diff <= 1000 * 60 * 60 * 24 * 7
+  }).length
+  const autoRenewingCount = licenses.filter((license) => license.autoRenewal).length
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Admin: Licenses</h1>
-
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
-        <input
-          type="search"
-          placeholder="Search by organization or email..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && setPage(1)}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
-        />
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => setSettingsOpen(true)}>
-            License settings
-          </Button>
-          <Button onClick={() => setCreateOpen(true)}>Create license</Button>
-        </div>
-      </div>
-
-      <Card padding="none">
-        {loading && !data ? (
-          <div className="flex justify-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600" />
-          </div>
-        ) : (
+      <PageHeader
+        eyebrow="Admin controls"
+        title="License operations"
+        description="Search across every organization, adjust renewal settings, and create licenses for any tenant from one place."
+        actions={
           <>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organization</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Assigned to</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expires</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Auto-renew</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {(data?.items ?? []).map((l) => (
-                    <LicenseRow
-                      key={l.id}
-                      license={l}
-                      onUpdated={load}
-                      onError={showToast}
-                      onEdit={setEditingLicense}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {data && data.items.length === 0 && (
-              <p className="p-6 text-gray-500 text-center">No licenses found.</p>
-            )}
-            {data && data.totalPages > 1 && (
-              <div className="px-4 py-3 border-t border-gray-200 flex justify-between items-center">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  className="text-sm text-primary-600 hover:text-primary-700 disabled:opacity-50"
-                >
-                  Previous
-                </button>
-                <span className="text-sm text-gray-600">
-                  Page {page} of {data.totalPages} ({data.totalCount} total)
-                </span>
-                <button
-                  type="button"
-                  disabled={page >= data.totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                  className="text-sm text-primary-600 hover:text-primary-700 disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
-            )}
+            <Button variant="secondary" onClick={() => setSettingsOpen(true)}>
+              Renewal settings
+            </Button>
+            <Button onClick={() => setCreateOpen(true)}>Create license</Button>
           </>
-        )}
+        }
+      />
+
+      <section className="mb-8 grid gap-4 md:grid-cols-3">
+        <StatCard label="Visible rows" value={String(licenses.length)} hint="Current page of license inventory." icon="◌" />
+        <StatCard label="Active" value={String(activeCount)} hint={`${expiringSoon} expiring within seven days.`} icon="↺" />
+        <StatCard label="Auto-renew" value={String(autoRenewingCount)} hint="Licenses set to renew automatically." icon="∞" />
+      </section>
+
+      <Card className="mb-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-[color:var(--text-strong)]">Global license inventory</h2>
+            <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
+              Search by organization name or assignee email and drill into the matching workspace.
+            </p>
+          </div>
+          <div className="w-full max-w-md">
+            <input
+              type="search"
+              placeholder="Search organization or assignee…"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(1)
+              }}
+              className="w-full rounded-2xl border border-[color:var(--border)] bg-white/85 px-4 py-3 text-sm text-[color:var(--text-strong)] shadow-sm outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[rgba(24,79,191,0.12)]"
+            />
+          </div>
+        </div>
       </Card>
+
+      {licensesQuery.isLoading ? (
+        <LoadingState label="Loading license inventory…" />
+      ) : licensesQuery.isError ? (
+        <EmptyState
+          title="Couldn’t load licenses"
+          description={
+            licensesQuery.error instanceof Error
+              ? licensesQuery.error.message
+              : 'Please refresh and try again.'
+          }
+          action={<Button onClick={() => licensesQuery.refetch()}>Retry</Button>}
+        />
+      ) : licenses.length === 0 ? (
+        <EmptyState
+          title="No licenses found"
+          description="Try a different search term or create a new license for one of your organizations."
+          action={<Button onClick={() => setCreateOpen(true)}>Create license</Button>}
+        />
+      ) : (
+        <Card padding="none">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-[color:var(--border)]">
+              <thead className="bg-[rgba(255,255,255,0.45)]">
+                <tr>
+                  <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-strong)]">Organization</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-strong)]">Assignee</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-strong)]">Expires</th>
+                  <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-strong)]">Status</th>
+                  <th className="px-5 py-4 text-right text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--muted-strong)]">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[color:var(--border)]">
+                {licenses.map((license) => (
+                  <tr key={license.id}>
+                    <td className="px-5 py-4 align-top">
+                      <Link
+                        to={`/organizations/${license.organizationId}`}
+                        className="font-semibold text-[color:var(--text-strong)] transition hover:text-[color:var(--accent)]"
+                      >
+                        {license.organizationName}
+                      </Link>
+                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">{license.organizationId}</p>
+                    </td>
+                    <td className="px-5 py-4 align-top text-sm text-[color:var(--text-muted)]">
+                      {license.assignedToEmail ?? 'Unassigned'}
+                    </td>
+                    <td className="px-5 py-4 align-top">
+                      <p className="text-sm font-medium text-[color:var(--text-strong)]">
+                        {formatDateTime(license.expiresAt)}
+                      </p>
+                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                        {formatRelativeDays(license.expiresAt)}
+                      </p>
+                    </td>
+                    <td className="px-5 py-4 align-top">
+                      <div className="flex flex-wrap gap-2">
+                        <StatusBadge tone={license.isActive ? 'success' : 'neutral'}>
+                          {license.isActive ? 'Active' : 'Revoked'}
+                        </StatusBadge>
+                        {license.isExpired && license.isActive && (
+                          <StatusBadge tone="warning">Expired</StatusBadge>
+                        )}
+                        {license.autoRenewal && <StatusBadge tone="info">Auto-renew</StatusBadge>}
+                      </div>
+                    </td>
+                    <td className="px-5 py-4 align-top text-right">
+                      <div className="flex justify-end gap-2">
+                        {license.isActive && (
+                          <>
+                            <Button variant="ghost" className="px-3 py-2 text-xs" onClick={() => setEditingLicense(license)}>
+                              Edit
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              className="px-3 py-2 text-xs text-[color:var(--danger)]"
+                              onClick={() => setRevokingLicense(license)}
+                            >
+                              Revoke
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {licensesQuery.data && licensesQuery.data.totalPages > 1 && (
+            <div className="flex items-center justify-between border-t border-[color:var(--border)] px-5 py-4 text-sm text-[color:var(--text-muted)]">
+              <Button variant="ghost" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>
+                Previous
+              </Button>
+              <span>
+                Page {page} of {licensesQuery.data.totalPages}
+              </span>
+              <Button
+                variant="ghost"
+                disabled={page >= licensesQuery.data.totalPages}
+                onClick={() => setPage((value) => value + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
 
       {createOpen && (
         <CreateLicenseModal
-          onCreated={() => {
-            setCreateOpen(false)
-            showToast('License created.', 'success')
-            load()
-          }}
           onClose={() => setCreateOpen(false)}
-          onError={showToast}
+          onCreated={async () => {
+            setCreateOpen(false)
+            setToast({ message: 'License created.', type: 'success' })
+            await queryClient.invalidateQueries({ queryKey: ['admin-licenses'] })
+          }}
+          onError={(message) => setToast({ message, type: 'error' })}
         />
       )}
 
@@ -160,9 +241,9 @@ export default function AdminLicensesPage() {
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
             setSettingsOpen(false)
-            showToast('Settings updated.', 'success')
+            setToast({ message: 'License settings updated.', type: 'success' })
           }}
-          onError={showToast}
+          onError={(message) => setToast({ message, type: 'error' })}
         />
       )}
 
@@ -170,79 +251,29 @@ export default function AdminLicensesPage() {
         <EditLicenseModal
           license={editingLicense}
           onClose={() => setEditingLicense(null)}
-          onSaved={() => {
+          onSaved={async () => {
             setEditingLicense(null)
-            load()
-            showToast('License updated.', 'success')
+            setToast({ message: 'License updated.', type: 'success' })
+            await queryClient.invalidateQueries({ queryKey: ['admin-licenses'] })
           }}
-          onError={showToast}
+          onError={(message) => setToast({ message, type: 'error' })}
         />
       )}
 
-      {toast && (
-        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
+      {revokingLicense && (
+        <ConfirmDialog
+          title="Revoke license"
+          description={`This will revoke the license for ${revokingLicense.organizationName} and disable auto-renewal.`}
+          confirmLabel="Revoke license"
+          tone="danger"
+          loading={revokeLicenseMutation.isPending}
+          onCancel={() => setRevokingLicense(null)}
+          onConfirm={() => revokeLicenseMutation.mutate(revokingLicense.id)}
+        />
       )}
+
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
-  )
-}
-
-function LicenseRow({
-  license,
-  onUpdated,
-  onError,
-  onEdit,
-}: {
-  license: License
-  onUpdated: () => void
-  onError: (msg: string, type: 'success' | 'error') => void
-  onEdit: (license: License) => void
-}) {
-  const handleRevoke = async () => {
-    if (!window.confirm('Revoke this license? It will no longer be active.')) return
-    try {
-      await cancelLicense(license.id)
-      onError('License revoked.', 'success')
-      onUpdated()
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to revoke', 'error')
-    }
-  }
-
-  return (
-    <tr>
-      <td className="px-4 py-3 text-sm text-gray-900">
-        <Link to={`/organizations/${license.organizationId}`} className="text-primary-600 hover:underline">
-          {license.organizationId.slice(0, 8)}…
-        </Link>
-      </td>
-      <td className="px-4 py-3 text-sm text-gray-600">{license.assignedToEmail ?? '—'}</td>
-      <td className="px-4 py-3 text-sm text-gray-600">{new Date(license.expiresAt).toLocaleString()}</td>
-      <td className="px-4 py-3 text-sm">
-        <span
-          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-            license.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-          }`}
-        >
-          {license.isActive ? 'Active' : 'Revoked'}
-        </span>
-        {license.isExpired && license.isActive && (
-          <span className="ml-1 text-red-600 text-xs">Expired</span>
-        )}
-      </td>
-      <td className="px-4 py-3 text-sm">{license.autoRenewal ? 'Yes' : 'No'}</td>
-      <td className="px-4 py-3 text-right text-sm">
-        {license.isActive && (
-          <>
-            <Button variant="ghost" className="text-xs py-1" onClick={() => onEdit(license)}>
-              Edit
-            </Button>
-            <Button variant="ghost" className="text-xs py-1 text-red-600" onClick={handleRevoke}>
-              Revoke
-            </Button>
-          </>
-        )}
-      </td>
-    </tr>
   )
 }
 
@@ -254,105 +285,105 @@ function EditLicenseModal({
 }: {
   license: License
   onClose: () => void
-  onSaved: () => void
-  onError: (msg: string, type: 'success' | 'error') => void
+  onSaved: () => Promise<void> | void
+  onError: (message: string) => void
 }) {
-  const [expiresAt, setExpiresAt] = useState(
-    license.expiresAt.slice(0, 16) // datetime-local format
-  )
+  const [expiresAt, setExpiresAt] = useState(license.expiresAt.slice(0, 16))
   const [autoRenewal, setAutoRenewal] = useState(license.autoRenewal)
-  const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    setExpiresAt(license.expiresAt.slice(0, 16))
-    setAutoRenewal(license.autoRenewal)
-  }, [license])
+  const updateLicenseMutation = useMutation({
+    mutationFn: () =>
+      updateLicense(license.id, {
+        expiresAt: new Date(expiresAt).toISOString(),
+        autoRenewal,
+      }),
+    onSuccess: onSaved,
+    onError: (error) => {
+      onError(error instanceof Error ? error.message : 'Failed to update license')
+    },
+  })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoading(true)
-    try {
-      await updateLicense(license.id, {
-        expiresAt: new Date(expiresAt).toISOString(),
-        autoRenewal,
-      })
-      onSaved()
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Update failed', 'error')
-    } finally {
-      setLoading(false)
-    }
+    await updateLicenseMutation.mutateAsync()
   }
 
   return (
     <Modal
-      title="Edit license"
+      title={`Edit license for ${license.organizationName}`}
       onClose={onClose}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button loading={loading} type="submit" form="edit-license-form">
-            Save
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button loading={updateLicenseMutation.isPending} type="submit" form="edit-license-form">
+            Save changes
           </Button>
         </>
       }
     >
       <form id="edit-license-form" onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Expires at</label>
+        <label className="block">
+          <span className="mb-2 block text-sm font-semibold text-[color:var(--text-strong)]">Expires at</span>
           <input
             type="datetime-local"
             value={expiresAt}
             onChange={(e) => setExpiresAt(e.target.value)}
             required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+            className="w-full rounded-2xl border border-[color:var(--border)] bg-white/85 px-4 py-3 text-[color:var(--text-strong)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[rgba(24,79,191,0.12)]"
           />
-        </div>
-        <div className="flex items-center gap-2">
+        </label>
+        <label className="flex items-center gap-3 rounded-2xl border border-[color:var(--border)] bg-white/70 px-4 py-3">
           <input
             type="checkbox"
-            id="autoRenewal"
             checked={autoRenewal}
             onChange={(e) => setAutoRenewal(e.target.checked)}
-            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            className="h-4 w-4 rounded border-[color:var(--border)] text-[color:var(--accent)] focus:ring-[color:var(--accent)]"
           />
-          <label htmlFor="autoRenewal" className="text-sm text-gray-700">Auto-renew when expired</label>
-        </div>
+          <span className="text-sm text-[color:var(--text-strong)]">Auto-renew when expired</span>
+        </label>
       </form>
     </Modal>
   )
 }
 
 function CreateLicenseModal({
-  onCreated,
   onClose,
+  onCreated,
   onError,
 }: {
-  onCreated: () => void
   onClose: () => void
-  onError: (msg: string, type: 'success' | 'error') => void
+  onCreated: () => Promise<void> | void
+  onError: (message: string) => void
 }) {
-  const [orgs, setOrgs] = useState<Organization[]>([])
   const [orgId, setOrgId] = useState('')
+  const [orgSearch, setOrgSearch] = useState('')
+  const deferredOrgSearch = useDeferredValue(orgSearch)
   const [autoRenewal, setAutoRenewal] = useState(true)
-  const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
-    getOrganizations().then(setOrgs).catch(() => setOrgs([]))
-  }, [])
+  const organizationsQuery = useQuery({
+    queryKey: ['admin-organizations', deferredOrgSearch],
+    queryFn: () =>
+      getAdminOrganizations({
+        pageSize: 20,
+        sortBy: 'name',
+        search: deferredOrgSearch.trim() || undefined,
+      }),
+  })
+
+  const createLicenseMutation = useMutation({
+    mutationFn: () => createLicense(orgId, { autoRenewal }),
+    onSuccess: onCreated,
+    onError: (error) => {
+      onError(error instanceof Error ? error.message : 'Failed to create license')
+    },
+  })
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!orgId) return
-    setLoading(true)
-    try {
-      await createLicense(orgId, { autoRenewal })
-      onCreated()
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to create license', 'error')
-    } finally {
-      setLoading(false)
-    }
+    await createLicenseMutation.mutateAsync()
   }
 
   return (
@@ -361,38 +392,66 @@ function CreateLicenseModal({
       onClose={onClose}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button loading={loading} type="submit" form="create-license-form" disabled={!orgId}>
-            Create
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            loading={createLicenseMutation.isPending}
+            type="submit"
+            form="create-license-form"
+            disabled={!orgId}
+          >
+            Create license
           </Button>
         </>
       }
     >
       <form id="create-license-form" onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Organization</label>
+        <label className="block">
+          <span className="mb-2 block text-sm font-semibold text-[color:var(--text-strong)]">Find organization</span>
+          <input
+            type="search"
+            value={orgSearch}
+            onChange={(e) => setOrgSearch(e.target.value)}
+            placeholder="Search by organization name…"
+            className="w-full rounded-2xl border border-[color:var(--border)] bg-white/85 px-4 py-3 text-[color:var(--text-strong)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[rgba(24,79,191,0.12)]"
+          />
+        </label>
+        <label className="block">
+          <span className="mb-2 block text-sm font-semibold text-[color:var(--text-strong)]">Organization</span>
           <select
             value={orgId}
             onChange={(e) => setOrgId(e.target.value)}
             required
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+            className="w-full rounded-2xl border border-[color:var(--border)] bg-white/85 px-4 py-3 text-[color:var(--text-strong)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[rgba(24,79,191,0.12)]"
           >
             <option value="">Select organization</option>
-            {orgs.map((o) => (
-              <option key={o.id} value={o.id}>{o.name}</option>
+            {(organizationsQuery.data?.items ?? []).map((organization) => (
+              <option key={organization.id} value={organization.id}>
+                {organization.name}
+              </option>
             ))}
           </select>
-        </div>
-        <div className="flex items-center gap-2">
+        </label>
+        {organizationsQuery.isLoading && (
+          <p className="text-sm text-[color:var(--text-muted)]">Loading organizations…</p>
+        )}
+        {organizationsQuery.isError && (
+          <p className="text-sm text-[color:var(--danger)]">
+            {organizationsQuery.error instanceof Error
+              ? organizationsQuery.error.message
+              : 'Failed to load organizations'}
+          </p>
+        )}
+        <label className="flex items-center gap-3 rounded-2xl border border-[color:var(--border)] bg-white/70 px-4 py-3">
           <input
             type="checkbox"
-            id="createAutoRenewal"
             checked={autoRenewal}
             onChange={(e) => setAutoRenewal(e.target.checked)}
-            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            className="h-4 w-4 rounded border-[color:var(--border)] text-[color:var(--accent)] focus:ring-[color:var(--accent)]"
           />
-          <label htmlFor="createAutoRenewal" className="text-sm text-gray-700">Auto-renew when expired</label>
-        </div>
+          <span className="text-sm text-[color:var(--text-strong)]">Auto-renew when expired</span>
+        </label>
       </form>
     </Modal>
   )
@@ -405,54 +464,65 @@ function LicenseSettingsModal({
 }: {
   onClose: () => void
   onSaved: () => void
-  onError: (msg: string, type: 'success' | 'error') => void
+  onError: (message: string) => void
 }) {
+  const settingsQuery = useQuery({
+    queryKey: ['license-settings'],
+    queryFn: getLicenseSettings,
+  })
   const [minutes, setMinutes] = useState(10)
-  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    getLicenseSettings().then((s) => setMinutes(s.expirationMinutes)).catch(() => {})
-  }, [])
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    try {
-      await updateLicenseSettings(minutes)
-      onSaved()
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed to update settings', 'error')
-    } finally {
-      setLoading(false)
+    if (settingsQuery.data) {
+      setMinutes(settingsQuery.data.expirationMinutes)
     }
-  }
+  }, [settingsQuery.data])
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: () => updateLicenseSettings(minutes),
+    onSuccess: onSaved,
+    onError: (error) => {
+      onError(error instanceof Error ? error.message : 'Failed to update settings')
+    },
+  })
 
   return (
     <Modal
-      title="License settings"
+      title="Renewal settings"
       onClose={onClose}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button loading={loading} type="submit" form="settings-form">Save</Button>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            loading={updateSettingsMutation.isPending}
+            onClick={() => updateSettingsMutation.mutate()}
+          >
+            Save settings
+          </Button>
         </>
       }
     >
-      <form id="settings-form" onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Default expiration (minutes) for new/renewed licenses
-          </label>
+      <div className="space-y-4">
+        <p className="text-sm leading-6 text-[color:var(--text-muted)]">
+          New licenses and automatic renewals use this duration in minutes.
+        </p>
+        <label className="block">
+          <span className="mb-2 block text-sm font-semibold text-[color:var(--text-strong)]">
+            Default expiration window
+          </span>
           <input
             type="number"
             min={1}
             max={525600}
             value={minutes}
             onChange={(e) => setMinutes(Number(e.target.value))}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+            className="w-full rounded-2xl border border-[color:var(--border)] bg-white/85 px-4 py-3 text-[color:var(--text-strong)] outline-none transition focus:border-[color:var(--accent)] focus:ring-2 focus:ring-[rgba(24,79,191,0.12)]"
           />
-        </div>
-      </form>
+        </label>
+        {settingsQuery.isLoading && <p className="text-sm text-[color:var(--text-muted)]">Loading current settings…</p>}
+      </div>
     </Modal>
   )
 }

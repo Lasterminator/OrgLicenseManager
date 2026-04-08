@@ -4,6 +4,7 @@ import type {
   UpdateLicenseRequest,
   PagedResult,
   PaginationRequest,
+  Organization,
 } from '../types/api'
 import { apiRequest } from './client'
 
@@ -16,6 +17,19 @@ export async function getAllLicenses(params?: PaginationRequest): Promise<PagedR
   if (params?.search) search.set('search', params.search)
   const q = search.toString()
   return apiRequest<PagedResult<License>>(`/api/admin/licenses${q ? `?${q}` : ''}`)
+}
+
+export async function getAdminOrganizations(
+  params?: PaginationRequest
+): Promise<PagedResult<Organization>> {
+  const search = new URLSearchParams()
+  if (params?.page) search.set('page', String(params.page))
+  if (params?.pageSize) search.set('pageSize', String(params.pageSize))
+  if (params?.sortBy) search.set('sortBy', params.sortBy)
+  if (params?.sortDescending != null) search.set('sortDescending', String(params.sortDescending))
+  if (params?.search) search.set('search', params.search)
+  const q = search.toString()
+  return apiRequest<PagedResult<Organization>>(`/api/admin/organizations${q ? `?${q}` : ''}`)
 }
 
 export async function createLicense(organizationId: string, body?: CreateLicenseRequest): Promise<License> {

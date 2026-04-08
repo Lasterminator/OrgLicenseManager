@@ -45,6 +45,7 @@ public class LicenseService : ILicenseService
 
         _logger.LogInformation("Created license {LicenseId} for organization {OrganizationId}", license.Id, organizationId);
 
+        license.Organization = organization;
         return license;
     }
 
@@ -81,6 +82,7 @@ public class LicenseService : ILicenseService
     {
         return await _context.Licenses
             .Include(l => l.AssignedToUser)
+            .Include(l => l.Organization)
             .FirstOrDefaultAsync(l => l.Id == licenseId);
     }
 
@@ -88,6 +90,7 @@ public class LicenseService : ILicenseService
     {
         var license = await _context.Licenses
             .Include(l => l.AssignedToUser)
+            .Include(l => l.Organization)
             .FirstOrDefaultAsync(l => l.Id == licenseId);
 
         if (license == null)

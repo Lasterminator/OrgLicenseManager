@@ -3,6 +3,7 @@ namespace OrgLicenseManager.Contracts.Licenses.Responses;
 public record LicenseResponse(
     Guid Id,
     Guid OrganizationId,
+    string OrganizationName,
     Guid? AssignedToUserId,
     string? AssignedToEmail,
     DateTime ExpiresAt,
